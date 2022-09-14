@@ -1,5 +1,5 @@
 // TODO:
-// parse command line arguments
+// parse command line arguments ::clap
 // install
 // remove
 // update
@@ -42,8 +42,8 @@ fn main() {
     test().unwrap()
 }
 
-fn write_json(addons: &Vec<Addon>, path: &PathBuf) -> anyhow::Result<()> {
-    let s = serde_json::to_string_pretty(addons)?;
+fn write_json(text: &Vec<Addon>, path: &PathBuf) -> anyhow::Result<()> {
+    let s = serde_json::to_string_pretty(text)?;
     fs::write(path, s)?;
     Ok(())
 }
