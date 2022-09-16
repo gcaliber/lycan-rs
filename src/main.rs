@@ -39,6 +39,7 @@ struct Cli {
 	#[clap(short, long, value_parser, multiple_values = true, group = "action")]
 	remove: Option<Vec<u32>>
 }
+
 fn main() {
 	let cli = Cli::parse();
 
@@ -56,7 +57,10 @@ fn main() {
 		}
 
 		for addon in addons.iter().flatten() {
-			// create update with latest json url
+			match addon.get_latest() {
+				Ok(_) => continue,
+				Err(e) => println!("{}", e)
+			}
 			// get latest json
 			// add update info from latest json
 			// download file
@@ -72,14 +76,14 @@ fn main() {
 
 fn addon_from_url(url: &String) -> Option<Addon> {
 	// implement lazy_static on the regex's here for speed
-	let re = Regex::new(r"^(?:https?:\/\/)?(?:www\.)?(?P<domain>.*)\.(?:com|org)\/(?P<rest>.*[^\/\n])").unwrap();
+	// let re = Regex::new(r"^(?:https?:\/\/)?(?:www\.)?(?P<domain>.*)\.(?:com|org)\/(?P<rest>.*[^\/\n])").unwrap();
+	let re = Regex::new(r#"^(?:https?://)?(?:www\.)?(?P<domain>.*)\.(?:com|org)/(?P<rest>.*)"#).unwrap();
 	let caps = re.captures(url)?;
 	let domain = caps.name("domain")?.as_str();
 	let rest = caps.name("rest")?.as_str();
-
 	match domain {
-		"github" => { 
-			let re = Regex::new(r"^(?P<project>.+\/.+)\/tree\/(?P<branch>.+)").unwrap();
+		"github" => {
+			let re = Regex::new(r#"^(?P<project>.+?/.+?)(?:/|$)(?:tree/)?(?P<branch>.+)?"#).unwrap();
 			let caps = re.captures(rest)?;
 			let project = caps.name("project")?.as_str();
 			let branch = match caps.name("branch") {
@@ -90,13 +94,13 @@ fn addon_from_url(url: &String) -> Option<Addon> {
 		},
 		"gitlab" => Some(Addon::new(String::from(rest), Source::Gitlab, None)),
 		"tukui" => {
-			let re = Regex::new(r"^(?:download|addons)\.php\?(?:ui|id)=(?P<project>.*)").unwrap();
+			let re = Regex::new(r#"^(?:download|addons)\.php\?(?:ui|id)=(?P<project>.*)"#).unwrap();
 			let caps = re.captures(rest)?;
 			let project = caps.name("project")?.as_str();
 			Some(Addon::new(String::from(project), Source::Tukui, None))
 		},
 		"wowinterface" => {
-			let re = Regex::new(r"^downloads\/info(?P<project>\d*)-").unwrap();
+			let re = Regex::new(r#"^downloads/info(?P<project>\d*)-"#).unwrap();
 			let caps = re.captures(rest)?;
 			let project = caps.name("project")?.as_str();
 			Some(Addon::new(String::from(project), Source::WowInt, None))
