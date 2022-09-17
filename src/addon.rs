@@ -56,17 +56,15 @@ impl Addon {
 
 
   #[tokio::main]
-  pub async fn get_latest(&self) -> impl Future<Output = Result<Value, reqwest::Error>> {
+  pub async fn get_latest(&self) -> &dyn Future<Output = Result<Response, reqwest::Error>> {
     let url = self.latest_url();
     let client = reqwest::Client::new();
     
-    client
+    &client
       .get(url)
       .header(CONTENT_TYPE, "application/json")
       .header(USER_AGENT, USER_AGENT_CHROME)
       .send()
-      .await.unwrap()
-      .json::<Value>()
 
     // self.set_version(&json);
     // self.set_download_url(&json);

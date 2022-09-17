@@ -9,6 +9,7 @@
 #![allow(unused_variables)]
 #![allow(unused_imports)]
 
+use futures::Future;
 use serde_json::{Result, Value};
 
 use regex::Regex;
@@ -74,13 +75,13 @@ fn main() {
 
 
 #[tokio::main]
-async fn process_install(a_opt: Vec<Option<Addon>>) -> anyhow::Result<()> {
+async fn process_install(a_opt: Vec<Option<Addon>>) {
+	let mut f: Vec<&dyn Future<Output = Result<Value>>>;
 	for addon in a_opt {
 		tokio::task::spawn_blocking(|| {
-			addon.unwrap().get_latest().unwrap();
+			f.push(addon.unwrap().get_latest());
 		}).await.expect("Task panicked")
 	}
-	Ok(())
 }
 
 fn addon_from_url(url: &String) -> Option<Addon> {
