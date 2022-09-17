@@ -1,14 +1,17 @@
 use std::{collections::HashMap, hash::Hash};
 
+use reqwest::{Response};
 use reqwest::header::{USER_AGENT, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
+use serde_json::{Value};
+use core::future::{Future};
 
 // #[serde(skip_serializing)]
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum AddonKind {
   GithubRelease,
-  GithubRepo{branch: String},
+  GithubRepo {branch: String},
   TukuiMain,
   TukuiAddon, 
   Gitlab,
@@ -23,6 +26,8 @@ pub struct Addon {
   pub version: Option<String>,
   pub dirs: Option<Vec<String>>,
   pub kind: AddonKind,
+  #[serde(skip_serializing)]
+  pub download_url: Option<String>,
 }
 
 const USER_AGENT_CHROME: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/105.0.0.0 Safari/537.36";
@@ -36,38 +41,48 @@ impl Addon {
       version: None,
       dirs: None,
       kind: kind,
+      download_url: None,
     }
   }
 
+// cargo run -- -i https://github.com/Stanzilla/AdvancedInterfaceOptions https://github.com/Tercioo/Plater-Nameplates/tree/master https://gitlab.com/siebens/legacy/autoactioncam https://www.tukui.org/download.php?ui=tukui https://www.tukui.org/addons.php?id=209 https://www.wowinterface.com/downloads/info24608-HekiliPriorityHelper.html
+
+// https://github.com/Stanzilla/AdvancedInterfaceOptions
+// https://github.com/Tercioo/Plater-Nameplates/tree/master
+// https://gitlab.com/siebens/legacy/autoactioncam
+// https://www.tukui.org/download.php?ui=tukui
+// https://www.tukui.org/addons.php?id=209
+// https://www.wowinterface.com/downloads/info24608-HekiliPriorityHelper.html
+
+
   #[tokio::main]
-  pub async fn get_latest(&self) -> anyhow::Result<()> {
+  pub async fn get_latest(&self) -> impl Future<Output = Result<Value, reqwest::Error>> {
     let url = self.latest_url();
     let client = reqwest::Client::new();
-    // let resp = reqwest::get(url)
-    //     .await?
-    //     .json::<HashMap<String, String>>()
-    //     .await?;
-    let json = client
+    
+    client
       .get(url)
       .header(CONTENT_TYPE, "application/json")
       .header(USER_AGENT, USER_AGENT_CHROME)
       .send()
-      .await?.json::<serde_json::Value>().await;
+      .await.unwrap()
+      .json::<Value>()
 
-    // println!("version: {}");
-    // println!("download_url: {}");
+    // self.set_version(&json);
+    // self.set_download_url(&json);
+    // self.set_name(&json);
 
-    // let resp = reqwest::get(url).await?;
-    // let text = resp.text().await?;
-    // println!("{}", text);
-    // let json = serde_json::from_str(&text)?;
-    // println!("{:#?}", json);
-    println!("{:#?}", json);
-    Ok(())
+    // println!("name: {}", self.name.as_deref().unwrap());
+    // println!("version: {}", self.version.as_deref().unwrap());
+    // println!("download_url: {}\n", self.download_url.as_deref().unwrap());
+  }
+
+  async fn get_updates(&mut self) {
+    
   }
 
   fn latest_url(&self) -> String {
-    match self.kind {
+    match &self.kind {
       AddonKind::GithubRelease => format!("https://api.github.com/repos/{}/releases/latest", self.project),
       AddonKind::GithubRepo{branch} => format!("https://api.github.com/repos/{}/commits/{}", self.project, branch),
       AddonKind::TukuiMain => format!("https://www.tukui.org/api.php?ui={}", self.project),
@@ -77,63 +92,94 @@ impl Addon {
     }
   }
 
-  fn set_version(&mut self, json: serde_json::Value) {
-    match self.kind {
+  fn set_version(&mut self, json: &Value) {
+    self.version = match &self.kind {
       AddonKind::GithubRelease => {
         let v = json["tag_name"].as_str().unwrap();
-        self.version = Some(String::from(if v != "" {v} else {json["name"].as_str().unwrap()}))
+        Some(String::from(if v != "" {v} else {json["name"].as_str().unwrap()}))
       },
-      AddonKind::GithubRepo{..} => self.version = Some(String::from(json["sha"].as_str().unwrap())),
-      AddonKind::TukuiMain | AddonKind::TukuiAddon => self.version = Some(String::from(json["version"].as_str().unwrap())),
+      AddonKind::GithubRepo{..} => Some(String::from(json["sha"].as_str().unwrap())),
+      AddonKind::TukuiMain => Some(String::from(json["version"].as_str().unwrap())),
+      AddonKind::TukuiAddon => {
+        let mut result: &str = "";
+        for item in json.as_array().unwrap() {
+          if item["id"].as_str().unwrap() == self.project {
+            result = item["version"].as_str().unwrap();
+          }
+        }
+        assert!(result != "");
+        Some(String::from(result))
+      },
       AddonKind::Gitlab => {
         let v = json[0]["tag_name"].as_str().unwrap();
-        self.version = Some(String::from(if v != "" {v} else {json[0]["name"].as_str().unwrap()}))
-      }
-      AddonKind::WowInt => self.version = Some(String::from(json[0]["UIversion"].as_str().unwrap())),
+        Some(String::from(if v != "" {v} else {json[0]["name"].as_str().unwrap()}))
+      },
+      AddonKind::WowInt => Some(String::from(json[0]["UIVersion"].as_str().unwrap())),
     }
   }
 
-  fn set_download_url(&mut self, json: serde_json::Value) {
-    self.download_url = Some(match self.source {
-      Source::Github => {
-        if self.branch == None {
-          let assets = json["assets"].as_array();
-          match assets {
-            Some(items) => {
-              let mut result: &str;
-              for item in items {
-                let url = item["browser_download_url"].as_str().unwrap();
-                let lc = url.to_lowercase();
-                if ["bcc", "tbc", "wotlk", "wrath", "classic"].iter().any(|&s| lc.contains(s)) {
-                  result = url;
-                } else {
-                  result = "";
-                }
+  fn set_download_url(&mut self, json: &Value) {
+    self.download_url = Some(match &self.kind {
+      AddonKind::GithubRelease => {
+        let assets = json["assets"].as_array();
+        match assets {
+          Some(items) => {
+            let mut result: &str = "";
+            for item in items {
+              if item["content_type"].as_str().unwrap() == "application/json" { continue }
+              let url = item["browser_download_url"].as_str().unwrap();
+              let lc = url.to_lowercase();
+              if ["bcc", "tbc", "wotlk", "wrath", "classic"].iter().any(|&s| !lc.contains(s)) {
+                result = url;
               }
-              String::from(result)
-            },
-            None => String::from(json["zipball_url"].as_str().unwrap())
-          }
-        } else {
-          format!("https://www.github.com/{}/archive/refs/heads/{}.zip", self.project, self.branch.unwrap())
+            }
+            assert!(result != "");
+            String::from(result)
+          },
+          None => String::from(json["zipball_url"].as_str().unwrap())
         }
       },
-      
-      Source::Tukui => String::from(json["url"].as_str().unwrap()),
-      Source::Gitlab => {
+      AddonKind::GithubRepo { branch } => format!("https://www.github.com/{}/archive/refs/heads/{}.zip", self.project, branch),
+      AddonKind::TukuiMain => String::from(json["url"].as_str().unwrap()),
+      AddonKind::TukuiAddon => {
         let mut result: &str = "";
-        for s in json[0]["assets"]["sources"].as_object() {
+        for item in json.as_array().unwrap() {
+          if item["id"].as_str().unwrap() == self.project {
+            result = item["url"].as_str().unwrap();
+          }
+        }
+        assert!(result != "");
+        String::from(result)
+      },
+      AddonKind::Gitlab => {
+        let mut result: &str = "";
+        let sources = json[0]["assets"]["sources"].as_array().unwrap();
+        for s in sources {
           if s["format"].as_str().unwrap() == "zip" {
             result = s["url"].as_str().unwrap()
           }
         }
         String::from(result)
-      }
-      Source::WowInt => { "".to_string()
-
-      }
+      },
+      AddonKind::WowInt => String::from(json[0]["UIDownload"].as_str().unwrap()),
     });
   }
 
-
+  fn set_name(&mut self, json: &Value) {
+    self.name = Some(String::from(match &self.kind {
+      AddonKind::GithubRelease | AddonKind::GithubRepo{..} | AddonKind::Gitlab => self.project.split('/').last().unwrap(),
+      AddonKind::TukuiMain => json["name"].as_str().unwrap(),
+      AddonKind::TukuiAddon => {
+       let mut result: &str = "";
+        for item in json.as_array().unwrap() {
+          if item["id"].as_str().unwrap() == self.project {
+            result = item["name"].as_str().unwrap();
+          }
+        }
+        assert!(result != "");
+        result
+      },
+      AddonKind::WowInt => json[0]["UIName"].as_str().unwrap(),
+    }))
+  }
 }

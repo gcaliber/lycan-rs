@@ -34,11 +34,12 @@ struct Cli {
 	#[clap(short, long, value_parser, multiple_values = true, group = "action")]
 	remove: Option<Vec<u32>>
 }
-
 fn main() {
 	let cli = Cli::parse();
 
-	test().unwrap()
+
+
+	// test().unwrap()
 
 	// let addons_json = PathBuf::from(r"/home/mike/projects/lycan/test/addons.json");
 	// let installed_addons = match read_addons(&addons_json) {
@@ -46,32 +47,41 @@ fn main() {
 	// 	Err(e) => Vec::new(),
 	// };
 
-	
+	if let Some(urls) = cli.install.as_deref() {
+		let mut addons: Vec<Option<Addon>> = Vec::new();
+		for url in urls {
+			addons.push(addon_from_url(url));
+		}
+
+		process_install(addons).unwrap();
+		// for addon in addons {
+			
+			// if let Some(mut a) = addon {
+			// 	match a.get_latest() {
+			// 		Ok(_) => continue,
+			// 		Err(e) => println!("{}", e)
+			// 	}
+			// }
+			// get latest json
+			// add update info from latest json
+			// download file
+			// unpack file
+			// parse addon top level directories
+			// move addon dirs from temp to destination
+			// write installed addons to file
+		}
+	}
 
 
-	// if let Some(urls) = cli.install.as_deref() {
-	// 	let mut addons: Vec<Option<Addon>> = Vec::new();
-	// 	for url in urls {
-	// 		addons.push(addon_from_url(url));
-	// 	}
-
-	// 	for addon in addons.iter().flatten() {
-	// 		match addon.get_latest() {
-	// 			Ok(_) => continue,
-	// 			Err(e) => println!("{}", e)
-	// 		}
-	// 		// get latest json
-	// 		// add update info from latest json
-	// 		// download file
-	// 		// unpack file
-	// 		// parse addon top level directories
-	// 		// move addon dirs from temp to destination
-	// 		// write installed addons to file
-	// 	}
-
-	// }
+#[tokio::main]
+async fn process_install(a_opt: Vec<Option<Addon>>) -> anyhow::Result<()> {
+	for addon in a_opt {
+		tokio::task::spawn_blocking(|| {
+			addon.unwrap().get_latest().unwrap();
+		}).await.expect("Task panicked")
+	}
+	Ok(())
 }
-
 
 fn addon_from_url(url: &String) -> Option<Addon> {
 	// implement lazy_static on the regex's here for speed
