@@ -10,7 +10,13 @@
 #![allow(unused_imports)]
 
 use futures::Future;
+use reqwest::Response;
 use serde_json::{Result, Value};
+
+use futures::{stream, StreamExt}; // 0.3.8
+use reqwest::Client; // 0.10.9
+use tokio; // 0.2.24, features = ["macros"]
+
 
 use regex::Regex;
 
@@ -22,6 +28,9 @@ use clap::Parser;
 use crate::addon::{Addon, AddonKind};
 mod addon;
 // https://github.com/Tercioo/Plater-Nameplates
+
+use reqwest::header::{USER_AGENT, CONTENT_TYPE};
+const USER_AGENT_CHROME: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/105.0.0.0 Safari/537.36";
 
 
 #[derive(Parser, Debug)]
@@ -35,53 +44,55 @@ struct Cli {
 	#[clap(short, long, value_parser, multiple_values = true, group = "action")]
 	remove: Option<Vec<u32>>
 }
-fn main() {
+#[tokio::main]
+async fn main() {
 	let cli = Cli::parse();
 
-
-
-	// test().unwrap()
-
-	// let addons_json = PathBuf::from(r"/home/mike/projects/lycan/test/addons.json");
-	// let installed_addons = match read_addons(&addons_json) {
-	// 	Ok(a) => a,
-	// 	Err(e) => Vec::new(),
-	// };
-
-	if let Some(urls) = cli.install.as_deref() {
-		let mut addons: Vec<Option<Addon>> = Vec::new();
-		for url in urls {
-			addons.push(addon_from_url(url));
-		}
-
-		process_install(addons).unwrap();
-		// for addon in addons {
-			
-			// if let Some(mut a) = addon {
-			// 	match a.get_latest() {
-			// 		Ok(_) => continue,
-			// 		Err(e) => println!("{}", e)
-			// 	}
-			// }
-			// get latest json
-			// add update info from latest json
-			// download file
-			// unpack file
-			// parse addon top level directories
-			// move addon dirs from temp to destination
-			// write installed addons to file
+	let mut addons: Vec<Addon> = Vec::new();
+	for url in cli.install.unwrap() {
+		if let Some(a) = addon_from_url(&url) {
+			addons.push(a);
 		}
 	}
 
+	const PARALLEL_REQUESTS: usize = 6;
 
-#[tokio::main]
-async fn process_install(a_opt: Vec<Option<Addon>>) {
-	let mut f: Vec<&dyn Future<Output = Result<Value>>>;
-	for addon in a_opt {
-		tokio::task::spawn_blocking(|| {
-			f.push(addon.unwrap().get_latest());
-		}).await.expect("Task panicked")
-	}
+	let client = Client::new();
+	let updates = stream::iter(addons)
+		.map(|addon| {
+			let url = addon.latest_url();
+			let client = client.clone();
+			tokio::spawn(async move {
+				let json = client.get(url)
+				.header(CONTENT_TYPE, "application/json")
+				.header(USER_AGENT, USER_AGENT_CHROME)
+				.send()
+				.await.unwrap().json::<Value>().await;
+				(addon, json)
+			})
+		})
+		.buffer_unordered(PARALLEL_REQUESTS);
+
+	updates
+		.for_each(|u| async {
+			match u {
+				Ok((mut addon, json)) => {
+					match json {
+						Ok(json) => {
+							addon.set_version(&json);
+							addon.set_download_url(&json);
+							addon.set_name(&json);
+
+							println!("{:?}", addon);
+						},
+						Err(e) => eprintln!("Got a reqwest::Error {}", e),		
+					}
+				},
+				Err(e) => eprintln!("Got a tokio::JoinError: {}", e),
+			}
+		})
+		.await;
+
 }
 
 fn addon_from_url(url: &String) -> Option<Addon> {

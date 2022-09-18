@@ -1,14 +1,15 @@
 use std::{collections::HashMap, hash::Hash};
 
+use futures::Future;
 use reqwest::{Response};
 use reqwest::header::{USER_AGENT, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value};
-use core::future::{Future};
+
 
 // #[serde(skip_serializing)]
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum AddonKind {
   GithubRelease,
   GithubRepo {branch: String},
@@ -18,7 +19,7 @@ pub enum AddonKind {
   WowInt,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Addon {
   pub id: u32,
   pub project: String,
@@ -26,7 +27,6 @@ pub struct Addon {
   pub version: Option<String>,
   pub dirs: Option<Vec<String>>,
   pub kind: AddonKind,
-  #[serde(skip_serializing)]
   pub download_url: Option<String>,
 }
 
@@ -54,32 +54,7 @@ impl Addon {
 // https://www.tukui.org/addons.php?id=209
 // https://www.wowinterface.com/downloads/info24608-HekiliPriorityHelper.html
 
-
-  #[tokio::main]
-  pub async fn get_latest(&self) -> &dyn Future<Output = Result<Response, reqwest::Error>> {
-    let url = self.latest_url();
-    let client = reqwest::Client::new();
-    
-    &client
-      .get(url)
-      .header(CONTENT_TYPE, "application/json")
-      .header(USER_AGENT, USER_AGENT_CHROME)
-      .send()
-
-    // self.set_version(&json);
-    // self.set_download_url(&json);
-    // self.set_name(&json);
-
-    // println!("name: {}", self.name.as_deref().unwrap());
-    // println!("version: {}", self.version.as_deref().unwrap());
-    // println!("download_url: {}\n", self.download_url.as_deref().unwrap());
-  }
-
-  async fn get_updates(&mut self) {
-    
-  }
-
-  fn latest_url(&self) -> String {
+  pub fn latest_url(&self) -> String {
     match &self.kind {
       AddonKind::GithubRelease => format!("https://api.github.com/repos/{}/releases/latest", self.project),
       AddonKind::GithubRepo{branch} => format!("https://api.github.com/repos/{}/commits/{}", self.project, branch),
@@ -90,7 +65,7 @@ impl Addon {
     }
   }
 
-  fn set_version(&mut self, json: &Value) {
+  pub fn set_version(&mut self, json: &Value) {
     self.version = match &self.kind {
       AddonKind::GithubRelease => {
         let v = json["tag_name"].as_str().unwrap();
@@ -116,7 +91,7 @@ impl Addon {
     }
   }
 
-  fn set_download_url(&mut self, json: &Value) {
+  pub fn set_download_url(&mut self, json: &Value) {
     self.download_url = Some(match &self.kind {
       AddonKind::GithubRelease => {
         let assets = json["assets"].as_array();
@@ -163,7 +138,7 @@ impl Addon {
     });
   }
 
-  fn set_name(&mut self, json: &Value) {
+  pub fn set_name(&mut self, json: &Value) {
     self.name = Some(String::from(match &self.kind {
       AddonKind::GithubRelease | AddonKind::GithubRepo{..} | AddonKind::Gitlab => self.project.split('/').last().unwrap(),
       AddonKind::TukuiMain => json["name"].as_str().unwrap(),
