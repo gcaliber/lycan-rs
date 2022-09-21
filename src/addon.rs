@@ -1,8 +1,11 @@
+use std::{env, fs};
+use std::fs::File;
+use std::path::{Path, PathBuf};
 use std::{collections::HashMap, hash::Hash};
 
 use futures::Future;
 use reqwest::{Response};
-use reqwest::header::{USER_AGENT, CONTENT_TYPE};
+use reqwest::header::{USER_AGENT, CONTENT_TYPE, HeaderMap, CONTENT_DISPOSITION};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value};
 
@@ -28,6 +31,7 @@ pub struct Addon {
   pub dirs: Option<Vec<String>>,
   pub kind: AddonKind,
   pub download_url: Option<String>,
+  pub filename: Option<String>,
 }
 
 const USER_AGENT_CHROME: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/105.0.0.0 Safari/537.36";
@@ -42,6 +46,7 @@ impl Addon {
       dirs: None,
       kind: kind,
       download_url: None,
+      filename: None,
     }
   }
 
@@ -154,5 +159,63 @@ impl Addon {
       },
       AddonKind::WowInt => json[0]["UIName"].as_str().unwrap(),
     }))
+  }
+
+  pub fn set_filename(&mut self, headers: &HeaderMap) {
+    let filename = if headers.contains_key(CONTENT_DISPOSITION) {
+      headers[CONTENT_DISPOSITION].to_str().unwrap()
+        .split("=").into_iter().collect::<Vec<&str>>()
+        .last().copied().unwrap().trim_matches(&['\'', '"'] as &[_])
+    }
+    else {
+      self.download_url.as_ref().unwrap()
+        .split("/").into_iter().collect::<Vec<&str>>()
+        .last().copied().unwrap()
+    };
+    self.filename = Some(String::from(filename));
+  }
+
+  pub fn extract(&self) {
+    let mut archive_path = env::temp_dir();
+    archive_path.push(self.filename.as_ref().unwrap());
+    
+    let mut extract_path = env::temp_dir();
+    extract_path.push(archive_path.file_stem().unwrap());
+
+    let archive = File::open(archive_path).unwrap();
+    zip_extract::extract(archive, &extract_path, false).unwrap();
+    }
+  
+  pub fn install(&mut self) {
+    let tmp = Path::new(self.filename.as_ref().unwrap());
+    let mut extract_path = env::temp_dir();
+    extract_path.push(tmp.file_stem().unwrap());
+
+    let addon_dirs = move_addon_dirs(&extract_path);
+
+  }  
+  
+  fn move_addon_dirs(extract_path: &PathBuf)  -> Vec<String> {
+    let result: Vec<String> = Vec::new();
+
+    // for file in fs::read_dir(&extract_path).unwrap() {
+    //   let kind = file.unwrap().file_type().unwrap();
+    //   if kind.is_file() {
+
+    //   }
+
+    fs::read_dir(extract_path)
+
+    }
+    // dig until we find a toc file
+    // if this is the only directory at this level
+      // if the name of dir is not the same as the toc file sans extension
+        // add this dir and done
+      // else
+        // 
+    // else
+      // get all subdirs of the parent dir
+        // 
+    result
   }
 }
