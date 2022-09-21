@@ -204,9 +204,19 @@ impl Addon {
 
     //   }
 
-    fs::read_dir(extract_path)
+    let tocs = fs::read_dir(extract_path).unwrap()
+      .map(|file| {
+        let f = file.unwrap();
+        let kind = f.file_type().unwrap();
+        if kind.is_file() && f.path().extension() == "toc" {
+          f.path()
+        }
+      });
+    
+    result
+  }
 
-    }
+}
     // dig until we find a toc file
     // if this is the only directory at this level
       // if the name of dir is not the same as the toc file sans extension
@@ -216,6 +226,3 @@ impl Addon {
     // else
       // get all subdirs of the parent dir
         // 
-    result
-  }
-}
