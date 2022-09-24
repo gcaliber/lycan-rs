@@ -1,9 +1,11 @@
+use std::io::Error;
 use std::{env, fs};
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::{collections::HashMap, hash::Hash};
 
 use futures::Future;
+use regex::{Regex, Captures};
 use reqwest::{Response};
 use reqwest::header::{USER_AGENT, CONTENT_TYPE, HeaderMap, CONTENT_DISPOSITION};
 use serde::{Deserialize, Serialize};
@@ -175,7 +177,7 @@ impl Addon {
     self.filename = Some(String::from(filename));
   }
 
-  pub fn extract(&self) {
+  fn extract(&self) -> &PathBuf {
     let mut archive_path = env::temp_dir();
     archive_path.push(self.filename.as_ref().unwrap());
     
@@ -184,45 +186,94 @@ impl Addon {
 
     let archive = File::open(archive_path).unwrap();
     zip_extract::extract(archive, &extract_path, false).unwrap();
+    &extract_path
     }
   
   pub fn install(&mut self) {
-    let tmp = Path::new(self.filename.as_ref().unwrap());
-    let mut extract_path = env::temp_dir();
-    extract_path.push(tmp.file_stem().unwrap());
-
-    let addon_dirs = move_addon_dirs(&extract_path);
-
+    // let filename = Path::new(self.filename.as_ref().unwrap());
+    // let mut extract_path = env::temp_dir();
+    // extract_path.push(filename.file_stem().unwrap());
+    let extract_path = self.extract();
+    // remove dirs if already installed
+    self.dirs = Some(self.move_addon_dirs(&extract_path));
   }  
   
-  fn move_addon_dirs(extract_path: &PathBuf)  -> Vec<String> {
+  fn move_addon_dirs(&self, extract_path: &PathBuf)  -> Vec<String> {
     let result: Vec<String> = Vec::new();
-
-    // for file in fs::read_dir(&extract_path).unwrap() {
-    //   let kind = file.unwrap().file_type().unwrap();
-    //   if kind.is_file() {
-
-    //   }
-
+  
     let tocs = fs::read_dir(extract_path).unwrap()
       .map(|file| {
         let f = file.unwrap();
         let kind = f.file_type().unwrap();
-        if kind.is_file() && f.path().extension() == "toc" {
-          f.path()
+        if kind.is_file() && f.path().extension().unwrap() == "toc" {
+          Some(f.path())
+        } else {
+          None
         }
       });
     
     result
   }
 
+  fn process_tocs(path: &PathBuf) -> anyhow::Result<Option<PathBuf>> {
+    for item in fs::read_dir(path)? {
+      let d = item?;
+      let kind = d.file_type()?;
+      if kind.is_file() {
+        if let Some(ext) = d.path().extension() {
+          if ext == "toc" {
+            let re = Regex::new(r#"(?P<head>.+?)(?:$|[-_](?i:mainline|wrath|tbc|vanilla|wotlkc?|bcc|classic))"#).unwrap();
+            let caps = re.captures(d.path().file_stem().unwrap().to_str().unwrap()).expect("PANIC: No capture available.");
+            let toc_name = caps.name("head").expect("PANIC: No capture named 'head'").as_str();
+            let corrected = path.parent().unwrap().to_path_buf();
+            corrected.push(toc_name);
+            fs::rename(path, corrected)?;
+            return Ok(Some(corrected));
+          }
+        } 
+      }
+    }
+    Ok(None)
+  }
+
+  fn get_addon_dirs(&self, extract_path: &PathBuf) -> anyhow::Result<Vec<PathBuf>> {
+    let mut current = extract_path;
+    let mut first_pass = true;
+
+    loop {
+      if let Some(path) = Addon::process_tocs(current)? {
+        if first_pass {
+          return Ok(vec![path]);
+        } else {
+          // let dirs = get_subdirs(current.parent().unwrap())
+          // let dirs: Vec<PathBuf> = current.parent().unwrap().read_dir()?
+          //   .filter_map(|r| {
+          //     let d = r.unwrap();
+          //     if d.file_type().unwrap().is_dir() {
+          //       return Some(d.path());
+          //     }
+          //     None
+          //   }).collect();
+          return get_subdirs(current.parent().unwrap())
+        }
+      } else {
+        current = &get_subdirs(current)?[0];
+      }
+      first_pass = false;
+    }
+  }
+
+
+ 
 }
-    // dig until we find a toc file
-    // if this is the only directory at this level
-      // if the name of dir is not the same as the toc file sans extension
-        // add this dir and done
-      // else
-        // 
-    // else
-      // get all subdirs of the parent dir
-        // 
+
+fn get_subdirs<P: AsRef<Path>>(path: P) -> anyhow::Result<Vec<PathBuf>> {
+  Ok(path.read_dir()?
+    .filter_map(|r| {
+      let d = r.expect("PANIC: Error reading directory");
+      if d.file_type().unwrap().is_dir() {
+        return Some(d.path());
+      }
+      None
+    }).collect())
+}
