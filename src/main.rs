@@ -9,8 +9,6 @@
 #![allow(unused_variables)]
 #![allow(unused_imports)]
 
-use futures::Future;
-use reqwest::Response;
 use serde_json::{Result, Value};
 
 use futures::{stream, StreamExt};
@@ -18,10 +16,10 @@ use reqwest::Client;
 use tokio;
 
 use regex::Regex;
-use std::fs::{File, OpenOptions};
+use std::fs::{File};
 
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::{PathBuf};
 use std::fs;
 
 use clap::Parser;
@@ -31,6 +29,8 @@ mod addon;
 
 use crate::config::{Config};
 mod config;
+
+mod unzip;
 
 use std::env;
 

@@ -6,7 +6,6 @@ use std::path::{Path, PathBuf};
 use std::{collections::HashMap, hash::Hash};
 
 use fs_extra::dir::{move_dir, CopyOptions};
-use futures::Future;
 use regex::{Regex, Captures};
 use reqwest::{Response};
 use reqwest::header::{USER_AGENT, CONTENT_TYPE, HeaderMap, CONTENT_DISPOSITION};
@@ -14,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value};
 
 use crate::config::{Config};
+use crate::unzip;
 
 // #[serde(skip_serializing)]
 
@@ -188,9 +188,7 @@ impl Addon {
     extract_path.push(archive_path.file_stem().expect("PANIC: Unable to set extract_path"));
 
     let archive = File::open(archive_path)?;
-  
-    zip_extract::extract(&archive, &extract_path, false)?; //.expect("we got an error"); // {_ => {}}
-
+    unzip::extract(&archive, &extract_path)?;
     Ok(extract_path)
   }
   
@@ -215,7 +213,7 @@ fn get_subdirs<P: AsRef<Path>>(path: P) -> anyhow::Result<Vec<PathBuf>> {
       None
     }).collect();
 
-    println!("found subdirs {:?}", result);
+    // println!("found subdirs {:?}", result);
 
   Ok(result)
 }
@@ -272,7 +270,7 @@ fn move_addon_dirs(extract_dir: &PathBuf, dest: &Path)  -> anyhow::Result<Vec<St
   let result = get_addon_dirs(extract_dir)?.into_iter()
     .flat_map(|source| {
       let name = source.file_name().unwrap();
-      println!("source:  {:?}\ntarget:  {:?}", source, dest);
+      // println!("source:  {:?}\ntarget:  {:?}", source, dest);
       let options = CopyOptions::new();
       let v = vec![&source];
       fs_extra::dir::create_all(&dest, false)?;
