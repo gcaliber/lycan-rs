@@ -1,9 +1,11 @@
+use std::ffi::OsString;
 use std::io::Error;
 use std::{env, fs};
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::{collections::HashMap, hash::Hash};
 
+use fs_extra::dir::{move_dir, CopyOptions};
 use futures::Future;
 use regex::{Regex, Captures};
 use reqwest::{Response};
@@ -11,6 +13,7 @@ use reqwest::header::{USER_AGENT, CONTENT_TYPE, HeaderMap, CONTENT_DISPOSITION};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value};
 
+use crate::config::{Config};
 
 // #[serde(skip_serializing)]
 
@@ -177,103 +180,105 @@ impl Addon {
     self.filename = Some(String::from(filename));
   }
 
-  fn extract(&self) -> &PathBuf {
+  fn extract(&self) -> anyhow::Result<PathBuf> {
     let mut archive_path = env::temp_dir();
-    archive_path.push(self.filename.as_ref().unwrap());
+    archive_path.push(self.filename.as_ref().expect("PANIC: Unable to set archive_path"));
     
     let mut extract_path = env::temp_dir();
-    extract_path.push(archive_path.file_stem().unwrap());
+    extract_path.push(archive_path.file_stem().expect("PANIC: Unable to set extract_path"));
 
-    let archive = File::open(archive_path).unwrap();
-    zip_extract::extract(archive, &extract_path, false).unwrap();
-    &extract_path
-    }
+    let archive = File::open(archive_path)?;
   
-  pub fn install(&mut self) {
-    // let filename = Path::new(self.filename.as_ref().unwrap());
-    // let mut extract_path = env::temp_dir();
-    // extract_path.push(filename.file_stem().unwrap());
-    let extract_path = self.extract();
+    zip_extract::extract(&archive, &extract_path, false)?; //.expect("we got an error"); // {_ => {}}
+
+    Ok(extract_path)
+  }
+  
+  pub fn install(&mut self, config: &Config) -> anyhow::Result<()> {
+
+    let extract_path = self.extract()?;
     // remove dirs if already installed
-    self.dirs = Some(self.move_addon_dirs(&extract_path));
+    self.dirs = Some(move_addon_dirs(&extract_path, &config.addon_dir)?);
+    Ok(())
   }  
   
-  fn move_addon_dirs(&self, extract_path: &PathBuf)  -> Vec<String> {
-    let result: Vec<String> = Vec::new();
-  
-    let tocs = fs::read_dir(extract_path).unwrap()
-      .map(|file| {
-        let f = file.unwrap();
-        let kind = f.file_type().unwrap();
-        if kind.is_file() && f.path().extension().unwrap() == "toc" {
-          Some(f.path())
-        } else {
-          None
-        }
-      });
-    
-    result
-  }
 
-  fn process_tocs(path: &PathBuf) -> anyhow::Result<Option<PathBuf>> {
-    for item in fs::read_dir(path)? {
-      let d = item?;
-      let kind = d.file_type()?;
-      if kind.is_file() {
-        if let Some(ext) = d.path().extension() {
-          if ext == "toc" {
-            let re = Regex::new(r#"(?P<head>.+?)(?:$|[-_](?i:mainline|wrath|tbc|vanilla|wotlkc?|bcc|classic))"#).unwrap();
-            let caps = re.captures(d.path().file_stem().unwrap().to_str().unwrap()).expect("PANIC: No capture available.");
-            let toc_name = caps.name("head").expect("PANIC: No capture named 'head'").as_str();
-            let corrected = path.parent().unwrap().to_path_buf();
-            corrected.push(toc_name);
-            fs::rename(path, corrected)?;
-            return Ok(Some(corrected));
-          }
-        } 
-      }
-    }
-    Ok(None)
-  }
-
-  fn get_addon_dirs(&self, extract_path: &PathBuf) -> anyhow::Result<Vec<PathBuf>> {
-    let mut current = extract_path;
-    let mut first_pass = true;
-
-    loop {
-      if let Some(path) = Addon::process_tocs(current)? {
-        if first_pass {
-          return Ok(vec![path]);
-        } else {
-          // let dirs = get_subdirs(current.parent().unwrap())
-          // let dirs: Vec<PathBuf> = current.parent().unwrap().read_dir()?
-          //   .filter_map(|r| {
-          //     let d = r.unwrap();
-          //     if d.file_type().unwrap().is_dir() {
-          //       return Some(d.path());
-          //     }
-          //     None
-          //   }).collect();
-          return get_subdirs(current.parent().unwrap())
-        }
-      } else {
-        current = &get_subdirs(current)?[0];
-      }
-      first_pass = false;
-    }
-  }
-
-
- 
 }
 
 fn get_subdirs<P: AsRef<Path>>(path: P) -> anyhow::Result<Vec<PathBuf>> {
-  Ok(path.read_dir()?
+  let result = path.as_ref().read_dir()?
     .filter_map(|r| {
       let d = r.expect("PANIC: Error reading directory");
       if d.file_type().unwrap().is_dir() {
         return Some(d.path());
       }
       None
-    }).collect())
+    }).collect();
+
+    println!("found subdirs {:?}", result);
+
+  Ok(result)
+}
+
+fn process_tocs(path: &PathBuf) -> anyhow::Result<Option<PathBuf>> {
+  for item in fs::read_dir(path)? {
+    let d = item?;
+    let kind = d.file_type()?;
+    if kind.is_file() {
+      if let Some(ext) = d.path().extension() {
+        if ext == "toc" {
+          let re = Regex::new(r#"(?P<head>.+?)(?:$|[-_](?i:mainline|wrath|tbc|vanilla|wotlkc?|bcc|classic))"#).unwrap();
+          let dpath = d.path();
+          let caps = re.captures(dpath.file_stem().unwrap().to_str().unwrap()).expect("PANIC: No capture available.");
+          let toc_name = caps.name("head").expect("PANIC: No capture named 'head'").as_str();
+          let mut corrected = path.parent().unwrap().to_path_buf();
+          corrected.push(toc_name);
+          fs::rename(path, &corrected)?;
+          return Ok(Some(corrected));
+        }
+      } 
+    }
+  }
+  Ok(None)
+}
+
+fn get_addon_dirs(extract_path: &PathBuf) -> anyhow::Result<Vec<PathBuf>> {
+  let mut current = extract_path.to_path_buf();
+  let mut first_pass = true;
+
+  loop {
+    if let Some(path) = process_tocs(&current)? {
+      if first_pass {
+        return Ok(vec![path]);
+      } else {
+        let t = get_subdirs(current.parent().unwrap());
+        // println!("returning subdirs {:?}", t);
+        return t;
+      }
+    } else {
+      for item in fs::read_dir(&current)? {
+        let d = item?;
+        if d.file_type()?.is_dir() {
+          current = d.path();
+          continue;
+        }
+      }
+    }
+    first_pass = false;
+  }
+}
+
+fn move_addon_dirs(extract_dir: &PathBuf, dest: &Path)  -> anyhow::Result<Vec<String>> {
+  let result = get_addon_dirs(extract_dir)?.into_iter()
+    .flat_map(|source| {
+      let name = source.file_name().unwrap();
+      println!("source:  {:?}\ntarget:  {:?}", source, dest);
+      let options = CopyOptions::new();
+      let v = vec![&source];
+      fs_extra::dir::create_all(&dest, false)?;
+      fs_extra::move_items(&v, dest, &options)?;
+      anyhow::Ok(String::from(name.to_str().unwrap()))
+    }).collect();
+  
+  Ok(result)
 }

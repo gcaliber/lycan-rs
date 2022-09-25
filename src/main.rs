@@ -29,11 +29,13 @@ use clap::Parser;
 use crate::addon::{Addon, AddonKind};
 mod addon;
 
+use crate::config::{Config};
+mod config;
+
 use std::env;
 
 use reqwest::header::{USER_AGENT, CONTENT_TYPE, CONTENT_DISPOSITION};
-const USER_AGENT_CHROME: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/105.0.0.0 Safari/537.36";
-
+const CHROME_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/105.0.0.0 Safari/537.36";
 
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
@@ -46,8 +48,10 @@ struct Cli {
 	#[clap(short, long, value_parser, multiple_values = true, group = "action")]
 	remove: Option<Vec<u32>>
 }
+
 #[tokio::main]
-async fn main() {
+async fn main() -> anyhow::Result<()> {
+	let config = Config::new(r"/home/mike/projects/addons/");
 	let cli = Cli::parse();
 
 	let mut addons: Vec<Addon> = Vec::new();
@@ -57,7 +61,7 @@ async fn main() {
 		}
 	}
 
-	const PARALLEL_REQUESTS: usize = 6;
+	const PARALLEL_REQUESTS: usize = 10;
 
 	let client = Client::new();
 	let updates = stream::iter(addons)
@@ -67,7 +71,7 @@ async fn main() {
 			tokio::spawn(async move {
 				let json = client.get(url)
 				.header(CONTENT_TYPE, "application/json")
-				.header(USER_AGENT, USER_AGENT_CHROME)
+				.header(USER_AGENT, CHROME_USER_AGENT)
 				.send()
 				.await.unwrap()
 				.json::<Value>()
@@ -104,7 +108,7 @@ async fn main() {
 			tokio::spawn(async move {
 				let download_url = addon.download_url.as_ref().unwrap();
 				let resp = client.get(download_url)
-				.header(USER_AGENT, USER_AGENT_CHROME)
+				.header(USER_AGENT, CHROME_USER_AGENT)
 				.send()
 				.await.unwrap();
 
@@ -138,11 +142,11 @@ async fn main() {
 		})
 		.await;
 
-	let addons_extracted = addons_downloaded.into_iter()
-		.map(|mut addon| {
-			addon.extract();
-			addon
-		});
+	let addons_installed: Vec<Addon> = addons_downloaded.into_iter()
+		.flat_map(|mut addon| {
+			addon.install(&config)?;
+			anyhow::Ok(addon)
+		}).collect();
 
 
 
@@ -160,7 +164,7 @@ async fn main() {
 	// 	});
 
 
-
+	Ok(())
 }
 
 fn addon_from_url(url: &String) -> Option<Addon> {
