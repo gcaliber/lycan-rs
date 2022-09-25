@@ -1,14 +1,10 @@
-use std::ffi::OsString;
-use std::io::Error;
 use std::{env, fs};
 use std::fs::File;
 use std::path::{Path, PathBuf};
-use std::{collections::HashMap, hash::Hash};
 
-use fs_extra::dir::{move_dir, CopyOptions};
-use regex::{Regex, Captures};
-use reqwest::{Response};
-use reqwest::header::{USER_AGENT, CONTENT_TYPE, HeaderMap, CONTENT_DISPOSITION};
+use fs_extra::dir::{CopyOptions};
+use regex::{Regex};
+use reqwest::header::{HeaderMap, CONTENT_DISPOSITION};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value};
 
@@ -29,17 +25,17 @@ pub enum AddonKind {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Addon {
-  pub id: u32,
   pub project: String,
-  pub name: Option<String>,
   pub version: Option<String>,
-  pub dirs: Option<Vec<String>>,
+  pub name: Option<String>,
   pub kind: AddonKind,
+  pub id: u32,
+  pub dirs: Option<Vec<String>>,
+  #[serde(skip_serializing)]
   pub download_url: Option<String>,
+  #[serde(skip_serializing)]
   pub filename: Option<String>,
 }
-
-const USER_AGENT_CHROME: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/105.0.0.0 Safari/537.36";
 
 impl Addon {
   pub fn new(project: String, kind: AddonKind) -> Self {
@@ -60,7 +56,7 @@ impl Addon {
 // https://github.com/Stanzilla/AdvancedInterfaceOptions
 // https://github.com/Tercioo/Plater-Nameplates/tree/master
 // https://gitlab.com/siebens/legacy/autoactioncam
-// https://www.tukui.org/download.php?ui=tukui
+// https://www.tukui.org/download.php?ui=elvui
 // https://www.tukui.org/addons.php?id=209
 // https://www.wowinterface.com/downloads/info24608-HekiliPriorityHelper.html
 
@@ -75,7 +71,8 @@ impl Addon {
     }
   }
 
-  pub fn set_version(&mut self, json: &Value) {
+  pub fn set_version(&mut self, json: &Value) -> bool {
+    let old_version = self.version.as_ref().unwrap().clone();
     self.version = match &self.kind {
       AddonKind::GithubRelease => {
         let v = json["tag_name"].as_str().unwrap();
@@ -98,7 +95,8 @@ impl Addon {
         Some(String::from(if v != "" {v} else {json[0]["name"].as_str().unwrap()}))
       },
       AddonKind::WowInt => Some(String::from(json[0]["UIVersion"].as_str().unwrap())),
-    }
+    };
+    self.version.as_ref().unwrap().as_str() == old_version
   }
 
   pub fn set_download_url(&mut self, json: &Value) {
@@ -192,15 +190,56 @@ impl Addon {
     Ok(extract_path)
   }
   
-  pub fn install(&mut self, config: &Config) -> anyhow::Result<()> {
-
+  pub fn install(&mut self, config: &Config, installed_addons: &Vec<Addon>) -> anyhow::Result<()> {
     let extract_path = self.extract()?;
-    // remove dirs if already installed
+    if let Some(installed) = self.get_installed(installed_addons) {
+      self.id = installed.id;
+      installed.remove()?;
+    }
     self.dirs = Some(move_addon_dirs(&extract_path, &config.addon_dir)?);
     Ok(())
-  }  
+  }
+
+  fn get_installed(&self, installed_addons: &Vec<Addon>) -> Option<Addon> {
+    for a in installed_addons {
+      if self == a {
+        return Some(a.clone())
+      }
+    }
+    None
+  }
+
+  fn remove(&self) -> anyhow::Result<()> {
+    for dir in self.dirs.as_ref().unwrap() {
+      fs::remove_dir_all(dir)?;
+    }
+    Ok(())
+  }
+
+  pub fn set_id(&mut self, mut ids: Vec<u32>) -> Vec<u32>{
+    if self.id != 0 { return ids; }
+    
+    let mut i = 1;
+    loop {
+      if ids.contains(&i) { 
+        i += 1;
+        continue}
+      else {
+        self.id = i;
+        ids.push(i);
+        break;
+      }
+    }
+    ids
+  }
   
 
+}
+
+impl PartialEq for Addon {
+  fn eq(&self, other: &Self) -> bool {
+      self.project == other.project
+  }
 }
 
 fn get_subdirs<P: AsRef<Path>>(path: P) -> anyhow::Result<Vec<PathBuf>> {
