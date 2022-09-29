@@ -1,7 +1,11 @@
+use std::io::stdout;
 use std::{env, fs};
 use std::fs::File;
 use std::path::{Path, PathBuf};
 
+use crossterm::ExecutableCommand;
+use crossterm::cursor::{SavePosition, MoveTo};
+use crossterm::style::Print;
 use fs_extra::dir::{CopyOptions};
 use regex::{Regex};
 use reqwest::header::{HeaderMap, CONTENT_DISPOSITION};
@@ -10,8 +14,6 @@ use serde_json::{Value};
 
 use crate::config::{Config};
 use crate::unzip;
-
-// #[serde(skip_serializing)]
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum AddonKind {
@@ -30,11 +32,13 @@ pub struct Addon {
   pub name: Option<String>,
   pub kind: AddonKind,
   pub id: u32,
-  pub dirs: Option<Vec<String>>,
+  pub dirs: Vec<String>,
   #[serde(skip_serializing)]
   pub download_url: Option<String>,
   #[serde(skip_serializing)]
   pub filename: Option<String>,
+  #[serde(skip)]
+  pub pos: (u16, u16),
 }
 
 impl Addon {
@@ -44,10 +48,11 @@ impl Addon {
       id: 0,
       name: None,
       version: None,
-      dirs: None,
+      dirs: Vec::new(),
       kind: kind,
       download_url: None,
       filename: None,
+      pos: (0, 0),
     }
   }
 
@@ -72,7 +77,7 @@ impl Addon {
   }
 
   pub fn set_version(&mut self, json: &Value) -> bool {
-    let old_version = self.version.as_ref().unwrap().clone();
+    let old_version = self.version.clone();
     self.version = match &self.kind {
       AddonKind::GithubRelease => {
         let v = json["tag_name"].as_str().unwrap();
@@ -96,7 +101,12 @@ impl Addon {
       },
       AddonKind::WowInt => Some(String::from(json[0]["UIVersion"].as_str().unwrap())),
     };
-    self.version.as_ref().unwrap().as_str() == old_version
+
+    match old_version {
+      None => true,
+      Some(old) => old != self.version.as_ref().unwrap().as_str(),
+    }
+
   }
 
   pub fn set_download_url(&mut self, json: &Value) {
@@ -196,7 +206,7 @@ impl Addon {
       self.id = installed.id;
       installed.remove()?;
     }
-    self.dirs = Some(move_addon_dirs(&extract_path, &config.addon_dir)?);
+    self.dirs = move_addon_dirs(&extract_path, &config.addon_dir)?;
     Ok(())
   }
 
@@ -210,7 +220,7 @@ impl Addon {
   }
 
   fn remove(&self) -> anyhow::Result<()> {
-    for dir in self.dirs.as_ref().unwrap() {
+    for dir in &self.dirs {
       fs::remove_dir_all(dir)?;
     }
     Ok(())
@@ -232,7 +242,21 @@ impl Addon {
     }
     ids
   }
-  
+
+  pub fn best_name(&self) -> String {
+    if let Some(n) = &self.name {
+      n.to_string()
+    }
+    else {
+      self.project.clone()
+    }
+  }
+
+  pub fn msg(&self, s: String) {
+    let (x, y) = self.pos;
+    stdout().execute(MoveTo(x, y)).unwrap();
+    stdout().execute(Print(format!("     {:1$}", s, s.len() + 20))).unwrap();
+  }
 
 }
 

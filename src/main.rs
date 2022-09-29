@@ -3,13 +3,18 @@
 #![allow(unused_imports)]
 
 use clap::Parser;
+use crossterm::terminal::ScrollUp;
+use crossterm::{ExecutableCommand, execute};
+use crossterm::cursor::{position, MoveTo, Hide, Show, MoveToNextLine};
+use crossterm::style::Print;
 use regex::Regex;
 use std::fs;
+use std::io::stdout;
 use tokio;
 
 use crate::addon::{Addon, AddonKind};
 use crate::config::{Config};
-use crate::core::{install, update, read_addons};
+use crate::core::{install, read_addons};
 
 mod addon;
 mod config;
@@ -42,22 +47,33 @@ async fn main() -> anyhow::Result<()> {
 	let cli = Cli::parse();
 
 	if let Some(urls) = cli.install {
+		let (x, y) = position().unwrap();
+		
 		let mut addons: Vec<Addon> = Vec::new();
-		for url in urls {
-			if let Some(a) = addon_from_url(&url) {
+		let mut i: u16 = 0;
+		for url in urls {			
+			if let Some(mut a) = addon_from_url(&url) {
+				a.pos = (0, y - i);
+				i += 1;
 				addons.push(a);
 			}
 		}
+		stdout().execute(Hide)?;
+		stdout().execute(ScrollUp(i))?;
+		
 		install(addons, &config).await?;
 	}
 
 
 	if cli.update {
-		let mut addons = read_addons(&config.addon_json)?;
-		update(addons, &config).await?;
+		let addons = read_addons(&config.addon_json)?;
+		install(addons, &config).await?;
 	}
-	
 
+	stdout().execute(ScrollUp(2))?;
+	stdout().execute(MoveToNextLine(1))?;
+	stdout().execute(Show)?;
+	
 	Ok(())
 }
 
